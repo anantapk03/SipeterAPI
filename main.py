@@ -5,6 +5,12 @@ import pickle
 import numpy as np
 from database import SessionLocal, engine, get_db
 from models import UserModel
+# import baru
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+from fastapi.middleware.cors import CORSMiddleware
+from passlib.context import CryptContext
 
 # Memuat model KNN
 with open('knn_model.pkl', 'rb') as model_file:
@@ -55,7 +61,7 @@ def predict(balita: Balita):
     
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=200, detail=str(e))
 
 # Menambahkan root endpoint untuk memastikan API berjalan
 @app.get("/")
@@ -67,3 +73,73 @@ def read_root():
 def get_users(skip: int = 0, limit: int =10, db: Session = Depends(get_db)):
     users = db.query(UserModel.UserModel).offset(skip).limit(limit).all()
     return users
+
+origins = []
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Password hashing settings
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# JWT settings
+SECRET_KEY = "your_secret_key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# OAuth2 settings
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Define Pydantic models
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+# Function to get a user by username
+def get_user_by_username(db: Session, username: str):
+    return db.query(UserModel.UserModel).filter(username == username).first()
+
+# Function to create a new user
+def create_user(db: Session, user: UserCreate):
+    password = pwd_context.hash(user.password)
+    db_user = User(username=user.username, password=password)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+# Function to authenticate the user
+def authenticate_user(username: str, password: str, db: Session):
+    user = db.query(UserModel.UserModel).filter(username == username).first()
+    if not user:
+        return False
+    if not pwd_context.verify(password, user.password):
+        return False
+    return user
+
+# Function to create access token
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+# Endpoint to login and get access token
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = authenticate_user(form_data.username, form_data.password, db)
+    if not user:
+        raise HTTPException(
+            status_code = 404,
+            detail = "login failed"
+        )
+    return user

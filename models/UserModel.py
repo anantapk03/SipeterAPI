@@ -5,8 +5,9 @@ class UserModel(Base):
     __tablename__="users"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
+    nama = Column(String)
     username = Column(String)
-    level = Column(String)
+    nip = Column(String)
     password = Column(String)
+    level = Column(String)
 
