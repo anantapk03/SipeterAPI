@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import pickle
@@ -11,6 +11,9 @@ from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 from passlib.context import CryptContext
+from typing import Annotated
+from models import PredictModel
+
 
 # Memuat model KNN
 with open('knn_model.pkl', 'rb') as model_file:
@@ -23,18 +26,13 @@ with open('label_encoder_status.pkl', 'rb') as le_file:
 # Inisialisasi FastAPI
 app = FastAPI()
 
-# Definisi kelas untuk validasi input
-class Balita(BaseModel):
-    umur: int
-    jenis_kelamin: int
-    tinggi_badan: float
-
 # Endpoint untuk prediksi
 @app.post("/predict")
-def predict(balita: Balita):
+def predict(nama_balita: str, umur : int, jenis_kelamin : int, tinggi_badan: float):
+
     try:
         # Mengambil data dari input dan memastikan tipe data benar
-        data = np.array([[balita.umur, balita.jenis_kelamin, balita.tinggi_badan]], dtype=float)
+        data = np.array([[umur, jenis_kelamin, tinggi_badan]], dtype=float)
         
         # Melakukan prediksi
         prediksi = knn_model.predict(data)
@@ -57,11 +55,20 @@ def predict(balita: Balita):
         "0" : laki-laki
         "1" : perempuan
         """
-        return {"status_gizi": status_gizi}
-    
-    
+
+        # simpan data
+        db = SessionLocal()
+        db_item = PredictModel.PredictModel(nama_balita = nama_balita, umur = umur, jenis_kelamin = jenis_kelamin, tinggi_badan = tinggi_badan, hasil_prediksi = status_gizi)
+        db.add(db_item)
+        db.commit()
+        db.refresh(db_item)
+        return db_item
+        #return {"status_gizi": status_gizi}
+        
     except Exception as e:
         raise HTTPException(status_code=200, detail=str(e))
+
+
 
 # Menambahkan root endpoint untuk memastikan API berjalan
 @app.get("/")
@@ -100,19 +107,6 @@ class UserCreate(BaseModel):
     username: str
     password: str
 
-# Function to get a user by username
-def get_user_by_username(db: Session, username: str):
-    return db.query(UserModel.UserModel).filter(username == username).first()
-
-# Function to create a new user
-def create_user(db: Session, user: UserCreate):
-    password = pwd_context.hash(user.password)
-    db_user = User(username=user.username, password=password)
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
-
 # Function to authenticate the user
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(UserModel.UserModel).filter(username == username).first()
@@ -120,18 +114,7 @@ def authenticate_user(username: str, password: str, db: Session):
         return False
     if not pwd_context.verify(password, user.password):
         return False
-    return user
-
-# Function to create access token
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return {'username': username}
 
 # Endpoint to login and get access token
 @app.post("/login")
@@ -139,7 +122,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
-            status_code = 404,
+            status_code = 401,
             detail = "login failed"
         )
     return user
+
+@app.post('/input')
+async def request(username: Annotated[str, Form()], password: Annotated[str, Form()]):
+    return {"username": username}
